@@ -1,0 +1,6 @@
+**/.DS_Store
+# *.caffemodel # add to git-lfs
+*.o
+*.pro
+*.user
+.qmake.stash
