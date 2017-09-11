@@ -1,5 +1,4 @@
 #include "segmenttrainer.h"
-#include "helper.h"
 
 #include <opencv2/imgcodecs.hpp>           // imread
 #include <opencv2/imgproc.hpp>             // cvtColor, equalizeHist
@@ -737,7 +736,7 @@ void SegmentTrainer::stop()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     //Snapshot:
@@ -757,7 +756,7 @@ void SegmentTrainer::pause()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     qDebug() << "ClassifierTrainer: Training is paused. Current iter:" << solver->iter();

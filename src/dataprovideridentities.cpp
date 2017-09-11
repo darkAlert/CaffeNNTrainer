@@ -10,9 +10,6 @@
 #include <QDir>
 #include <QDirIterator>
 
-#include "helper.h"
-
-
 DataProviderIdentities::DataProviderIdentities(unsigned int identities_in_memory, unsigned int prefetch_identities_in_memory, int worker_count)
 {
     assert (worker_count > 0);
@@ -208,7 +205,7 @@ unsigned int DataProviderIdentities::update()
         for (unsigned int i = 0; i < workers.size(); ++i) {
             if (worker_is_running[i] == true) {
                 all_were_terminated = false;
-                helper::little_sleep(std::chrono::microseconds(1000));
+                std::this_thread::sleep_for(std::chrono::microseconds(1000));
                 break;
             }
         }
@@ -261,7 +258,7 @@ void DataProviderIdentities::stop()
         for (unsigned int i = 0; i < workers.size(); ++i) {
             if (worker_is_running[i] == true) {
                 all_were_terminated = false;
-                helper::little_sleep(std::chrono::microseconds(1000));
+                std::this_thread::sleep_for(std::chrono::microseconds(1000));
                 break;
             }
         }

@@ -1,5 +1,4 @@
 #include "dataprovidersamples.h"
-#include "helper.h"
 
 #include <assert.h>
 #include <fstream>
@@ -197,7 +196,7 @@ void DataProviderSamples::update()
         for (unsigned int i = 0; i < workers.size(); ++i) {
             if (worker_is_running[i] == true) {
                 all_were_terminated = false;
-                helper::little_sleep(std::chrono::microseconds(1000));
+                std::this_thread::sleep_for(std::chrono::microseconds(1000));
                 break;
             }
         }
@@ -222,7 +221,7 @@ void DataProviderSamples::stop()
         for (unsigned int i = 0; i < workers.size(); ++i) {
             if (worker_is_running[i] == true) {
                 all_were_terminated = false;
-                helper::little_sleep(std::chrono::microseconds(1000));
+                std::this_thread::sleep_for(std::chrono::microseconds(1000));
                 break;
             }
         }

@@ -17,6 +17,7 @@ private:
     //Params:
     unsigned int train_batch_size;     //if zero then all samples will be stored in the memory
     int imread_type;                   //-1: IMREAD_UNCHANGED, 0: CV_IMREAD_GRAYSCALE, 1: RGB
+    cv::Size sample_size;
 
     //Vars:
     std::vector<std::pair<std::string, std::vector<float> > > train_entries_list;
@@ -41,6 +42,7 @@ private:
     std::mutex prefetch_batch_mutex;
 
     //Methods:
+    bool make_sample_list(const std::string &filename, std::vector<std::pair<std::string, std::vector<float> > > &sample_list);
     bool make_sample_list(const std::string &filename, int test_samples_per_identity = 0);
     void shuffle_entries(uint32_t times = 0);
     void shuffle_batch();
@@ -51,9 +53,11 @@ private:
     void load_test_batch();
 
 public:
-    DataProviderAttributes(unsigned int samples_in_memory = 0, int worker_count = 1, int imread_type = -1);
+    DataProviderAttributes(unsigned int samples_in_memory = 0, int worker_count = 1,
+                           int imread_type = -1, cv::Size sample_size = cv::Size(0,0));
     ~DataProviderAttributes();
     bool open(std::string path_to_csv, int num_test_samples = 0);
+    bool open_data(const std::string &path_to_train, const std::string path_to_test = "");
     void stop();
     void update();
     void clear_test_batch();

@@ -9,7 +9,6 @@
 #include <QDir>
 
 #include "caffe/net.hpp"
-#include "helper.h"
 #include <cuda.h>
 #include <opencv2/cudawarping.hpp>
 
@@ -18,7 +17,8 @@ using namespace caffe;
 #define AT_BOOL 0
 #define AT_RECOLORAZING_FLOAT 1
 #define AT_RECOLORAZING_SOFTMAX 2
-#define ATTRIBUTES_TEST_TYPE 5
+#define AT_MULTI_LABEL 3
+#define ATTRIBUTES_TEST_TYPE AT_MULTI_LABEL
 
 
 AttributePredictorTrainer::AttributePredictorTrainer(bool gpu_mode)
@@ -62,13 +62,13 @@ void AttributePredictorTrainer::prefetch_batches_by_worker(unsigned int batch_ma
         const bool mirror = true;
 
         const bool scale = true;
-        const float max_scale_ratio = 0.25;
+        const float max_scale_ratio = 0.1; //0.25
 
         const bool rotate = true;
         const float max_rotate_angle = 10;//25.0;
 
         const bool blackbox = true;
-        const float max_blackbox_size = 0.5;
+        const float max_blackbox_size = 0.25;
 
         const bool deform = true;
         const float max_deform_ratio = 1.1;
@@ -76,7 +76,7 @@ void AttributePredictorTrainer::prefetch_batches_by_worker(unsigned int batch_ma
         const bool grayscale = false;
         const float grayscale_prob = 0.5;
 
-        const bool intensity_shift = true;
+        const bool intensity_shift = false;
         const float max_intensity_shift = 30/255.0;
 
         const bool negative = false;
@@ -327,7 +327,6 @@ void AttributePredictorTrainer::set_data_batch()
         memcpy(data, data_batch.first.get(), sizeof(float)*sample_size*num);
         memcpy(labels, data_batch.second.get(), sizeof(float)*label_size*num);
         flag = false;
-
     } while(flag);
 }
 
@@ -346,21 +345,38 @@ void AttributePredictorTrainer::set_test_data_batch(int sample_index)
     assert(num == test_net_batch_size);
 
     //Set the data and labels:
-    auto rest = (unsigned int)(num_test_samples)-sample_index >= (unsigned int)num ? (unsigned int)num : data_provider->total_test_samples()-sample_index;
+    int rest = num_test_samples-sample_index >= num ? num : num_test_samples-sample_index;
     memcpy(data, &(test_data.first.get()[sample_index*sample_size]), sizeof(float)*sample_size*rest);
     memcpy(labels, &(test_data.second.get()[sample_index*label_size]), sizeof(float)*label_size*rest);
 }
 
-void AttributePredictorTrainer::openTrainData(const std::string &path_to_train)
+bool AttributePredictorTrainer::open_data(const std::string &path_to_train, const std::string &path_to_test,
+                                          const cv::Size sample_size)
 {
-    //Open data:
+    //Init DataProvider:
     if (data_provider == nullptr) {
-        data_provider = std::make_shared<DataProviderAttributes>(train_batch_size, data_provider_worker_count, imread_type);
+        data_provider = std::make_shared<DataProviderAttributes>(train_batch_size, data_provider_worker_count,
+                                                                 imread_type, sample_size);
     }
-    if (data_provider->open(path_to_train, num_test_samples) == false) {
-        qDebug() << "ClassifierTrainer: Unknown error while data loading. Training has been stopped.";
-        return;
+
+    //Open data:
+    if (path_to_test.length() > 0) {
+        if (data_provider->open_data(path_to_train, path_to_test) == false) {
+            qDebug() << "AttributePredictorTrainer: Unknown error while data loading. Training has been stopped.";
+            return false;
+        }
     }
+    //Legacy test data openning:
+    else {
+        if (data_provider->open(path_to_train, num_test_samples) == false) {
+            qDebug() << "AttributePredictorTrainer: Unknown error while data loading (LEGACY). Training has been stopped.";
+            return false;
+        }
+    }
+    num_test_samples = data_provider->total_test_samples();
+    qDebug() << "num_test_samples=" << num_test_samples;
+
+    return true;
 }
 
 void AttributePredictorTrainer::train_by_worker()
@@ -390,7 +406,108 @@ void AttributePredictorTrainer::train_by_worker()
     while(running)
     {
         /// Test phase ///
-#if ATTRIBUTES_TEST_TYPE == AT_BOOL
+#if ATTRIBUTES_TEST_TYPE == AT_MULTI_LABEL
+        if (solver->iter() % test_interval == 0)
+        {
+            Caffe::set_mode(Caffe::GPU);
+            const int num = test_net->blob_by_name("data")->shape(0);
+            boost::shared_ptr<Blob<float> > label_blob = test_net->blob_by_name("label");
+            boost::shared_ptr<Blob<float> > output_blob = test_net->blob_by_name("output");
+            boost::shared_ptr<Blob<float> > fc_blob = test_net->blob_by_name("fc5_4_reshape");
+            boost::shared_ptr<Blob<float> > softmax_blob = test_net->blob_by_name("softmax");
+            const int label_size = label_blob->shape(1)*label_blob->shape(2)*label_blob->shape(3);
+            const int fc_size = fc_blob->shape(1)*fc_blob->shape(2)*fc_blob->shape(3);
+            const int outputs_per_label = fc_size / label_size;
+            float test_loss = 0.0;
+            std::vector<float> singles_accuracy(label_size, 0.0);
+            std::vector<float> singles_precision(label_size*outputs_per_label, 0.0);
+            std::vector<float> singles_recall(label_size*outputs_per_label, 0.0);
+
+            for (unsigned int i = 0; i < num_test_data; i += num) {
+                float loss;
+                set_test_data_batch(i);
+                test_net->Forward(&loss);
+                test_loss += loss;
+
+                //Calculate errors:
+                const float* labels = label_blob->cpu_data();
+                const float* outputs = output_blob->cpu_data();
+                const float* fc = fc_blob->cpu_data();
+                const float* softmax = softmax_blob->cpu_data();
+                std::vector<int> errors(label_size, 0);
+                std::vector<int> TP(label_size*outputs_per_label, 0);
+                std::vector<int> FP(label_size*outputs_per_label, 0);
+                std::vector<int> FN(label_size*outputs_per_label, 0);
+
+                for (int s = 0; s < num; ++s) {
+                    int offs = s*label_size;
+                    for (int j = 0; j < label_size; ++j) {
+                        int index = offs + j;
+                        errors[j] += int(outputs[index] != labels[index]);
+                        int lp = static_cast<int>(labels[index]);
+                        int ln = static_cast<int>(outputs[index]);
+                        TP[j*outputs_per_label+lp] += int(outputs[index] == labels[index]);
+                        FP[j*outputs_per_label+ln] += int(outputs[index] != labels[index]);
+                        FN[j*outputs_per_label+lp] += int(outputs[index] != labels[index]);
+                    }
+                    if (i == 150*num) {
+                    int output_size = label_size * outputs_per_label;
+                    qDebug() << i+s << fc[s*output_size] << fc[s*output_size+1] << fc[s*output_size+2]<< fc[s*output_size+3] << "softmax:"
+                             << softmax[s*output_size] << softmax[s*output_size+1] << softmax[s*output_size+2]<< softmax[s*output_size+3] << "output:"
+                             << outputs[s*label_size] << outputs[s*label_size+1] << "truth:"
+                             << labels[s*label_size] << labels[s*label_size+1];
+                    }
+                }
+
+                //Calc accuracy:
+                for (uint32_t j = 0; j < singles_accuracy.size(); ++j) {
+                    singles_accuracy[j] += (1.0 - float(errors[j])/float(num));
+                }
+                //Calc precision/recall:
+                for (uint32_t j = 0; j < singles_precision.size(); ++j) {
+                    float pr = TP[j] + FP[j];
+                    float rc = TP[j] + FN[j];
+                    singles_precision[j] += (pr > 0 ? float(TP[j]) / pr : 0.0);
+                    singles_recall[j] += (rc > 0 ? float(TP[j]) / rc : 0.0);
+                }
+            }
+
+            //Calc total testing acc/precision/recall:
+            float divider = ceil(float(num_test_data)/float(num));
+            float total_accuracy = 0.0;
+            float precision = 0.0, recall = 0.0;
+            for (uint32_t j = 0; j < singles_accuracy.size(); ++j) {
+                singles_accuracy[j] /= divider;
+                total_accuracy += singles_accuracy[j];
+            }
+            for (uint32_t j = 0; j < singles_precision.size(); ++j) {
+                singles_precision[j] /= divider;
+                singles_recall[j] /= divider;
+                precision += singles_precision[j];
+                recall += singles_recall[j];
+            }
+            test_loss /= divider;
+            total_accuracy /= singles_accuracy.size();
+            precision /= singles_precision.size();
+            recall /= singles_recall.size();
+
+            //Log:
+            QString acc_log = "", precision_log = "", recall_log = "";
+            for (uint32_t j = 0; j < singles_accuracy.size(); ++j) {
+                acc_log += QString("%1acc%2 = %3").arg(j > 0 ? QString(", ") : QString("")).arg(j).arg(singles_accuracy[j]);
+            }
+            for (uint32_t j = 0; j < singles_precision.size(); ++j) {
+                precision_log += QString("%1pr%2 = %3").arg(j > 0 ? QString(", ") : QString("")).arg(j).arg(singles_precision[j]);
+                recall_log += QString("%1rc%2 = %3").arg(j > 0 ? QString(", ") : QString("")).arg(j).arg(singles_recall[j]);
+            }
+            qDebug() << "Test phase, iteration" << solver->iter();
+            qDebug().nospace() << "   Test net: loss = " << test_loss <<  ", acc = " << total_accuracy
+                               << ", precision = " << precision << ", recall = " << recall;
+            qDebug().noquote() << "  " << acc_log;
+            qDebug().noquote() << "  " << precision_log;
+            qDebug().noquote() << "  " << recall_log;
+        }
+#elif ATTRIBUTES_TEST_TYPE == AT_BOOL
         if (solver->iter() % test_interval == 0)
         {
             Caffe::set_mode(Caffe::GPU);
@@ -562,20 +679,24 @@ void AttributePredictorTrainer::train_by_worker()
 //            const int sample_width = net->blob_by_name("data")->shape(3);
 //            const int sample_size = sample_channels*sample_height*sample_width;
 
+////            boost::shared_ptr<Blob<float> > label_blob = net->blob_by_name("label");
+////            const float* labels = label_blob->cpu_data();
+////            const int label_size = label_blob->shape(1)*label_blob->shape(2)*label_blob->shape(3);
+
 //            for (int j = 0; j < batch_size; ++j) {
 //                //Grayscale:
-////                cv::Mat out_img = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j);
+//                cv::Mat out_img = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j);
 
-//                //Rgb:
-//                cv::Mat out_img;
-//                std::vector<cv::Mat> channels(3);
-//                channels[0] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j);
-//                channels[1] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j + sample_height*sample_width);
-//                channels[2] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j + sample_height*sample_width*2);
-//                cv::merge(channels, out_img);
+////                //Rgb:
+////                cv::Mat out_img;
+////                std::vector<cv::Mat> channels(3);
+////                channels[0] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j);
+////                channels[1] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j + sample_height*sample_width);
+////                channels[2] = cv::Mat(sample_height,sample_width, CV_32FC1, const_cast<float*>(data) + sample_size*j + sample_height*sample_width*2);
+////                cv::merge(channels, out_img);
 
 //                out_img /= 0.00390625;
-//                QString path = QString("/home/darkalert/Desktop/test/%1_s.png").arg(j);
+//                QString path = QString("/home/darkalert/Desktop/test/%1_l.png").arg(j);
 //                cv::imwrite(path.toStdString(), out_img);
 //            }
 //        }
@@ -666,8 +787,10 @@ void AttributePredictorTrainer::train(const std::string &path_to_solver)
     test_net = std::make_shared<Net<float> >(test_net_param);
     solver->net().get()->ShareTrainedLayersWith(test_net.get());
 
-    //Load weights:
-    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/Snaps/classifier_hairs/best/tiny_gray_v3_r_iter_65000.caffemodel");
+    //Load weights: 
+    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/gena2017/Resources/Nets/matching_oval_tiny_v1_i25k.caffemodel");
+//    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/gena2017/Resources/Nets/orig_x2_iter_55000.caffemodel");
+//    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/Snaps/classifier_hairs/best/tiny_gray_v3_r_iter_65000.caffemodel");
 //    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/gena2017/backend/Resources/Nets/orig_x2_iter_55000.caffemodel");
 //    solver->net()->CopyTrainedLayersFrom("/home/darkalert/MirrorJob/Snaps/resnet_imagenet/ResNet-50-model.caffemodel");
 
@@ -694,7 +817,7 @@ void AttributePredictorTrainer::restore(const std::string &path_to_solver, const
         return;
     }
 
-    if (data_provider->total_train_samples()) {
+    if (data_provider->total_train_samples() == 0) {
         qDebug() << "ClassifierTrainer: Training data are empty!";
     }
 
@@ -740,7 +863,7 @@ void AttributePredictorTrainer::stop()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     if (data_provider != nullptr) {
@@ -766,7 +889,7 @@ void AttributePredictorTrainer::pause()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     qDebug() << "ClassifierTrainer: Training is paused. Current iter:" << solver->iter();

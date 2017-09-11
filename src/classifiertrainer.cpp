@@ -9,7 +9,6 @@
 #include <QDir>
 
 #include "caffe/net.hpp"
-#include "helper.h"
 #include <cuda.h>
 
 
@@ -423,7 +422,7 @@ void ClassifierTrainer::stop()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     if (data_provider != nullptr) {
@@ -449,7 +448,7 @@ void ClassifierTrainer::pause()
 
     //Wait for all threads to terminate:
     while (prefetch_worker_is_running == true || train_worker_is_running == true) {
-        helper::little_sleep(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
 
     qDebug() << "ClassifierTrainer: Training is paused. Current iter:" << solver->iter();

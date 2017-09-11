@@ -18,11 +18,12 @@ class AttributePredictorTrainer
 private:
     //Params:
     const unsigned int train_batch_size = 20000;//96*100;     //if zero then all samples will be stored in the memory
-    const int num_test_samples = 0;//1000;
-    const int data_provider_worker_count = 4;//4;
+    const int data_provider_worker_count = 6;
     const unsigned int prefetch_batch_margin = 100;
-    const int test_net_batch_size = 1;//20;
+    const int test_net_batch_size = 32;//20;
     const int imread_type = 0;                   //-1: IMREAD_UNCHANGED, 0: CV_IMREAD_GRAYSCALE, 1: RGB
+
+    int num_test_samples = 0;              //legacy
 
     //Vars:
     std::shared_ptr<DataProviderAttributes> data_provider;
@@ -58,7 +59,8 @@ public:
     void stop();
     void pause();
     void resume();
-    void openTrainData(const std::string &path_to_train);
+    bool open_data(const std::string &path_to_train, const std::string &path_to_test,
+                   const cv::Size sample_size = cv::Size(0,0));
 };
 
 #endif // ATTRIBUTEPREDICTORTRAINER_H

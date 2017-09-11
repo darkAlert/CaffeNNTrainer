@@ -74,12 +74,17 @@ void MainWindow::Train()
     std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/classifier_hairs/solver.prototxt";
     */
 
-    //Facial components:
-    std::string path_to_train_data = "/home/darkalert/MirrorJob/Datasets/Processed/FFUD_clean_components/hair_back_and_hair_2814.txt";
-    std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/classifier_hairs/solver.prototxt";
+    //Oval types:
+    std::string path_to_train_data = "/home/darkalert/MirrorJob/Datasets/Processed/ovals/train_oval_ab_2k.csv";
+    std::string path_to_test_data = "/home/darkalert/MirrorJob/Datasets/Processed/ovals/test_oval_ab_2k.csv";
+    std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/attr_ovals/solver.prototxt";
+    cv::Size sample_size(144,144);
 
-    qDebug() << "Setting data...";
-    nn_trainer->openTrainData(path_to_train_data);
+    qDebug() << "Loading data...";
+    if (nn_trainer->open_data(path_to_train_data, path_to_test_data, sample_size) == false) {
+        qDebug() << "Exit";
+        return;
+    }
     qDebug() << "Run training...";
     nn_trainer->train(path_to_solver);
 
@@ -162,22 +167,35 @@ void MainWindow::Restore()
 
 #elif NETWORK_TYPE == 2
     /// Attribute Predictor ///
-    //Face attributes:
     /*
+    //Face attributes:
     std::string path_to_train_data = "/home/darkalert/Desktop/MirrorJob/Datasets/Processed/attributes/ms200k_200x150_train.txt";
     std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/attributes_net_1/qsolver.prototxt";
     std::string path_to_solverstate = "/home/darkalert/MirrorJob/Snaps/attributes_net_1/snaps/v7_iter_34079.solverstate";
     */
 
+    /*
+    //Facial components:
     std::string path_to_train_data = "/home/darkalert/MirrorJob/Datasets/Processed/FFUD_components/oval_rgb_train_l12_22656.txt";
     std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/classifier_ovals/solver.prototxt";
     std::string path_to_solverstate = "/home/darkalert/MirrorJob/Snaps/classifier_ovals/snaps/oval_xs_rgb_l12_iter_70000.solverstate";
+    */
 
-    qDebug() << "Setting data...";
-    nn_trainer->openTrainData(path_to_train_data);
+    //Oval types:
+    std::string path_to_train_data = "/home/darkalert/MirrorJob/Datasets/Processed/ovals/train_oval_ab_2k.csv";
+    std::string path_to_test_data = "/home/darkalert/MirrorJob/Datasets/Processed/ovals/test_oval_ab_2k.csv";
+    std::string path_to_solver = "/home/darkalert/MirrorJob/Snaps/attr_ovals/solver.prototxt";
+    std::string path_to_solverstate = "/home/darkalert/MirrorJob/Snaps/attr_ovals/snaps/ab_tiny_v1_iter_15000.solverstate";
+    cv::Size sample_size(144,144);
 
+    qDebug() << "Loading data...";
+    if (nn_trainer->open_data(path_to_train_data, path_to_test_data, sample_size) == false) {
+        qDebug() << "Exit";
+        return;
+    }
     qDebug() << "Restoring...";
     nn_trainer->restore(path_to_solver, path_to_solverstate);
+
 
 #elif NETWORK_TYPE == 3
     /// Landmark Trainer ///

@@ -19,7 +19,6 @@ TEMPLATE = app
 
 SOURCES += main.cpp\
         mainwindow.cpp \
-    helper.cpp \
     triplettraineronline.cpp \
     dataprovideridx.cpp \
     dataprovideridentities.cpp \
@@ -34,7 +33,6 @@ SOURCES += main.cpp\
     cartoonconstructor.cpp
 
 HEADERS  += mainwindow.h \
-    helper.h \
     triplettraineronline.h \
     dataprovideridx.h \
     dataprovideridentities.h \
